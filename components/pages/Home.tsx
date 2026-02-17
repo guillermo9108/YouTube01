@@ -263,28 +263,25 @@ export default function Home() {
                 setVideos(res.videos);
                 setFolders(res.folders as any);
                 setActiveCategories(['TODOS', ...res.activeCategories]);
+                
                 // Guardar el sortOrder aplicado por el backend
                 if ((res as any).appliedSortOrder) {
                     setAppliedSortOrder((res as any).appliedSortOrder);
                 }
-                if (selectedCategory !== 'TODOS' && navigationPath.length === 0 && res.videos.length > 0 && systemSettings) {
-                    const firstVid = res.videos[0];
-                    const rawPath = (firstVid as any).rawPath || firstVid.videoUrl;
-                    const rootPath = systemSettings.localLibraryPath || '';
-                    if (rawPath.startsWith(rootPath)) {
-                        const relative = rawPath.substring(rootPath.length).replace(/^[\\/]+/, '');
-                        const segments = relative.split(/[\\/]/).filter(Boolean);
-                        if (segments.length > 1) {
-                            const newPath = segments.slice(0, -1);
-                            if (newPath.length > 0) {
-                                const finalPath = (newPath[newPath.length-1].toLowerCase() === selectedCategory.toLowerCase()) ? newPath.slice(0, -1) : newPath;
-                                if (finalPath.length > 0) { setNavigationPath(finalPath); setShowFolderGrid(true); setNavVisible(true); }
-                            }
-                        }
-                    }
+                
+                // Si el backend sugiere una ruta de navegación (al filtrar por categoría)
+                const navInfo = (res as any).navigationInfo;
+                if (navInfo && navInfo.suggestedPath && navigationPath.length === 0 && selectedCategory !== 'TODOS') {
+                    // Navegar automáticamente a la carpeta que contiene esta categoría
+                    setNavigationPath(navInfo.suggestedPath);
+                    setShowFolderGrid(true);
+                    setNavVisible(true);
                 }
-            } else { setVideos(prev => [...prev, ...res.videos]); }
-            setHasMore(res.hasMore); setPage(p);
+            } else { 
+                setVideos(prev => [...prev, ...res.videos]); 
+            }
+            setHasMore(res.hasMore); 
+            setPage(p);
         } catch (e) { toast.error("Error al sincronizar catálogo"); } 
         finally { setLoading(false); setLoadingMore(false); }
     };
