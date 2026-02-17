@@ -83,7 +83,16 @@ export default function Watch() {
         setThrottled(true);
         setVisibleRelated(12);
         setShowComments(false);
-        setExtractionAttempted(false); 
+        setExtractionAttempted(false);
+        
+        // Obtener sortOrder de la URL si viene de búsqueda
+        const hash = window.location.hash;
+        if (hash.includes('?')) {
+            const params = new URLSearchParams(hash.split('?')[1]);
+            const urlSort = params.get('sort');
+            if (urlSort) setUserSortOverride(urlSort);
+        }
+        
         return () => { setThrottled(false); };
     }, [id]);
 
@@ -93,43 +102,54 @@ export default function Watch() {
         
         const fetchData = async () => {
             try {
-                const [v, settings, all] = await Promise.all([
+                // Obtener video actual y videos de la misma carpeta con sortOrder
+                const [v, folderData, settings] = await Promise.all([
                     db.getVideo(id),
-                    db.getSystemSettings(),
-                    db.getAllVideos()
+                    db.getFolderVideos(id),
+                    db.getSystemSettings()
                 ]);
 
                 if (v) {
                     setVideo(v); 
                     setLikes(Number(v.likes || 0));
                     setDislikes(Number(v.dislikes || 0));
-
-                    const currentPath = ((v as any).rawPath || v.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
                     
-                    const series = all.filter(ov => {
-                        const ovPath = ((ov as any).rawPath || ov.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
-                        return ovPath === currentPath;
-                    }).sort((a, b) => naturalCollator.compare(a.title, b.title));
-
-                    setSeriesQueue(series);
+                    // Obtener sortOrder: prioridad URL > carpeta configurada > LATEST
+                    const effectiveSort = userSortOverride || folderData.sortOrder || (v as any).folderSortOrder || 'LATEST';
+                    setFolderSortOrder(effectiveSort);
+                    
+                    // Videos de la misma carpeta ya ordenados por el backend
+                    const folderVideos = folderData.videos || [];
+                    
+                    // Si hay override del usuario, reordenar en frontend
+                    const sortedFolderVideos = userSortOverride 
+                        ? sortVideosBySortOrder(folderVideos, userSortOverride)
+                        : folderVideos;
+                    
+                    setSeriesQueue(sortedFolderVideos);
 
                     // Encontrar índice del video actual en la serie
-                    const currentIndex = series.findIndex(sv => sv.id === v.id);
+                    const currentIndex = sortedFolderVideos.findIndex(sv => sv.id === v.id);
                     
                     // Videos SIGUIENTES en la serie (desde el actual hacia adelante)
-                    const nextInSeries = series.slice(currentIndex + 1);
+                    const nextInSeries = sortedFolderVideos.slice(currentIndex + 1);
                     
                     // Videos ANTERIORES en la serie (para "volver a ver")
-                    const previousInSeries = series.slice(0, currentIndex);
+                    const previousInSeries = sortedFolderVideos.slice(0, currentIndex);
                     
-                    // Contenido de otras carpetas (descubrimiento aleatorio)
-                    const others = all.filter(ov => {
+                    // Contenido de otras carpetas (descubrimiento)
+                    const currentPath = ((v as any).rawPath || v.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
+                    const allVideos = await db.getAllVideos();
+                    const others = allVideos.filter(ov => {
                         const ovPath = ((ov as any).rawPath || ov.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
                         return ovPath !== currentPath;
-                    }).sort(() => Math.random() - 0.5);
+                    });
+                    
+                    // Ordenar "otros" aleatoriamente para descubrimiento
+                    const shuffledOthers = sortVideosBySortOrder(others, 'RANDOM');
 
                     // Orden final: Siguientes → Anteriores → Otros
-                    setRelatedVideos([...nextInSeries, ...previousInSeries, ...others]);
+                    setRelatedVideos([...nextInSeries, ...previousInSeries, ...shuffledOthers]);
                     db.getComments(v.id).then(setComments);
 
                     if (user) {
@@ -148,7 +168,7 @@ export default function Watch() {
             } catch (e) {} finally { setLoading(false); }
         };
         fetchData();
-    }, [id, user?.id]);
+    }, [id, user?.id, userSortOverride]);
 
     const handleRate = async (type: 'like' | 'dislike') => {
         if (!user || !video) return;
