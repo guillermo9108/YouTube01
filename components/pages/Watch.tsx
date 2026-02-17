@@ -14,11 +14,30 @@ import { generateThumbnail } from '../../utils/videoGenerator';
 
 const naturalCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
+// Helper para ordenar videos según sortOrder
+const sortVideosBySortOrder = (videos: Video[], sortOrder: string): Video[] => {
+    const sorted = [...videos];
+    if (sortOrder === 'ALPHA') {
+        sorted.sort((a, b) => naturalCollator.compare(a.title, b.title));
+    } else if (sortOrder === 'RANDOM') {
+        // Fisher-Yates shuffle
+        for (let i = sorted.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [sorted[i], sorted[j]] = [sorted[j], sorted[i]];
+        }
+    } else {
+        // LATEST - ordenar por createdAt descendente
+        sorted.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }
+    return sorted;
+};
+
 export default function Watch() {
     const { id } = useParams();
     const { user, refreshUser } = useAuth();
     const { setThrottled } = useGrid();
     const navigate = useNavigate();
+    const location = useLocation();
     const toast = useToast();
     
     const [video, setVideo] = useState<Video | null>(null);
