@@ -48,6 +48,8 @@ export default function Watch() {
     const [relatedVideos, setRelatedVideos] = useState<Video[]>([]);
     const [seriesQueue, setSeriesQueue] = useState<Video[]>([]);
     const [visibleRelated, setVisibleRelated] = useState(12);
+    const [folderSortOrder, setFolderSortOrder] = useState<string>('LATEST');
+    const [userSortOverride, setUserSortOverride] = useState<string>('');
     
     const [likes, setLikes] = useState<number>(0);
     const [dislikes, setDislikes] = useState<number>(0);
