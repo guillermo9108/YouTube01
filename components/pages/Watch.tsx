@@ -481,9 +481,30 @@ export default function Watch() {
                 </div>
 
                 <div className="lg:w-80 space-y-4 shrink-0">
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 flex items-center gap-2">
-                        <Play size={12} className="text-indigo-500"/> Recomendados
-                    </h3>
+                    <div className="flex items-center justify-between px-2">
+                        <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                            <Play size={12} className="text-indigo-500"/> A Continuación
+                        </h3>
+                        <div className="flex items-center gap-1">
+                            <span className="text-[8px] text-slate-600 uppercase">
+                                {folderSortOrder === 'ALPHA' ? 'A-Z' : folderSortOrder === 'RANDOM' ? 'Aleatorio' : 'Recientes'}
+                            </span>
+                            <div className="relative">
+                                <button 
+                                    onClick={() => {
+                                        const orders = ['LATEST', 'ALPHA', 'RANDOM'];
+                                        const currentIdx = orders.indexOf(userSortOverride || folderSortOrder);
+                                        const nextIdx = (currentIdx + 1) % orders.length;
+                                        setUserSortOverride(orders[nextIdx]);
+                                    }}
+                                    className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-all"
+                                    title="Cambiar orden"
+                                >
+                                    <ArrowDownUp size={12}/>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                     <div className="space-y-4">
                         {relatedVideos.slice(0, visibleRelated).map((v, idx) => {
                             const isNextInSeries = seriesQueue.findIndex(sq => sq.id === video?.id) + 1 === seriesQueue.findIndex(sq => sq.id === v.id);
