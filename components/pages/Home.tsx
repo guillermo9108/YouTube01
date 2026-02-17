@@ -357,8 +357,14 @@ export default function Home() {
             setSelectedCategory('TODOS'); setShowFolderGrid(true); setVideos([]); 
         } else {
             db.saveSearch(searchQuery || s.label);
-            const contextParam = searchQuery ? `?q=${encodeURIComponent(searchQuery)}` : '';
-            if (s.type === 'VIDEO' || s.type === 'AUDIO') navigate(`/watch/${s.id}${contextParam}`);
+            // Pasar contexto de búsqueda Y orden al watch
+            const effectiveSort = userSortOrder || appliedSortOrder;
+            let contextParam = '';
+            if (searchQuery) contextParam += `q=${encodeURIComponent(searchQuery)}`;
+            if (effectiveSort) contextParam += (contextParam ? '&' : '') + `sort=${effectiveSort}`;
+            const fullParam = contextParam ? `?${contextParam}` : '';
+            
+            if (s.type === 'VIDEO' || s.type === 'AUDIO') navigate(`/watch/${s.id}${fullParam}`);
             else if (s.type === 'MARKET') navigate(`/marketplace/${s.id}`);
             else if (s.type === 'USER') navigate(`/channel/${s.id}`);
         }
