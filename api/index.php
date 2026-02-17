@@ -134,6 +134,7 @@ try {
         case 'admin_update_category_price': admin_update_category_price($pdo, $input); break;
         case 'admin_update_folder_price': admin_update_folder_price($pdo, $input); break;
         case 'admin_update_folder_sort': admin_update_folder_sort($pdo, $input); break;
+        case 'admin_bulk_edit_folder': admin_bulk_edit_folder($pdo, $input); break;
         case 'client_log': @file_put_contents('client_errors.txt', "[".date('Y-m-d H:i:s')."] " . ($input['level'] ?? 'INFO') . ": " . ($input['message'] ?? '') . PHP_EOL, FILE_APPEND); respond(true); break;
 
         // --- LIBRARY ENGINE ---
