@@ -263,6 +263,10 @@ export default function Home() {
                 setVideos(res.videos);
                 setFolders(res.folders as any);
                 setActiveCategories(['TODOS', ...res.activeCategories]);
+                // Guardar el sortOrder aplicado por el backend
+                if ((res as any).appliedSortOrder) {
+                    setAppliedSortOrder((res as any).appliedSortOrder);
+                }
                 if (selectedCategory !== 'TODOS' && navigationPath.length === 0 && res.videos.length > 0 && systemSettings) {
                     const firstVid = res.videos[0];
                     const rawPath = (firstVid as any).rawPath || firstVid.videoUrl;
