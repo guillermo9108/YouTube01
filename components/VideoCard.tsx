@@ -15,7 +15,7 @@ interface VideoCardProps {
   video: Video;
   isUnlocked: boolean;
   isWatched?: boolean;
-  context?: { query?: string, category?: string, folder?: string, page?: number };
+  context?: { query?: string, category?: string, folder?: string, page?: number, sortOrder?: string };
 }
 
 const formatTimeAgo = (timestamp: number) => {
