@@ -126,7 +126,19 @@ function video_get_all($pdo) {
     $totalCount = $total->fetchColumn();
     
     $subfolders = video_discover_subfolders($pdo, $folder, $search);
-    $activeCategories = $pdo->query("SELECT DISTINCT category FROM videos WHERE category NOT IN ('PENDING','PROCESSING','FAILED_METADATA')")->fetchAll(PDO::FETCH_COLUMN);
+    
+    // Obtener categorías activas DENTRO de la carpeta actual (no globales)
+    if (!empty($folder)) {
+        // Si estamos en una carpeta, mostrar solo categorías de esa carpeta
+        $catParams = [$folderPath];
+        $activeCatsSql = "SELECT DISTINCT category FROM videos WHERE videoUrl LIKE ? AND category NOT IN ('PENDING','PROCESSING','FAILED_METADATA')";
+        $activeCatsStmt = $pdo->prepare($activeCatsSql);
+        $activeCatsStmt->execute($catParams);
+        $activeCategories = $activeCatsStmt->fetchAll(PDO::FETCH_COLUMN);
+    } else {
+        // En la raíz, mostrar todas las categorías globales
+        $activeCategories = $pdo->query("SELECT DISTINCT category FROM videos WHERE category NOT IN ('PENDING','PROCESSING','FAILED_METADATA')")->fetchAll(PDO::FETCH_COLUMN);
+    }
     
     video_process_rows($videos);
     
