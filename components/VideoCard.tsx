@@ -74,6 +74,7 @@ const VideoCard: React.FC<VideoCardProps> = React.memo(({ video, isUnlocked, isW
     if (context?.folder) params.set('f', context.folder);
     if (context?.category && context.category !== 'TODOS') params.set('c', context.category);
     if (context?.page !== undefined) params.set('p', String(context.page));
+    if (context?.sortOrder) params.set('sort', context.sortOrder);
     
     const qs = params.toString();
     return qs ? `${base}?${qs}` : base;
