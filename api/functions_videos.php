@@ -142,13 +142,40 @@ function video_get_all($pdo) {
     
     video_process_rows($videos);
     
+    // Información adicional de navegación
+    $navigationInfo = null;
+    if (!empty($category) && $category !== 'TODOS' && empty($folder) && count($videos) > 0) {
+        // Si estamos filtrando por categoría sin carpeta, encontrar la carpeta padre
+        $firstVideo = $videos[0];
+        $videoPath = $firstVideo['rawPath'] ?? $firstVideo['videoUrl'] ?? '';
+        
+        $stmtNav = $pdo->query("SELECT localLibraryPath FROM system_settings WHERE id = 1");
+        $rootNav = rtrim($stmtNav->fetchColumn(), '/\\');
+        
+        if ($rootNav && strpos($videoPath, $rootNav) === 0) {
+            $relPath = trim(substr($videoPath, strlen($rootNav)), '/\\');
+            $segments = array_filter(explode('/', str_replace('\\', '/', $relPath)));
+            $segments = array_values($segments);
+            
+            if (count($segments) > 1) {
+                // Quitar el nombre del archivo
+                array_pop($segments);
+                $navigationInfo = [
+                    'suggestedPath' => $segments,
+                    'parentFolder' => end($segments)
+                ];
+            }
+        }
+    }
+    
     respond(true, [
         'videos' => $videos, 
         'folders' => $subfolders, 
         'activeCategories' => $activeCategories, 
         'total' => (int)$totalCount, 
         'hasMore' => ($offset + $limit) < $totalCount,
-        'appliedSortOrder' => $effectiveSort // Informar al frontend qué orden se aplicó
+        'appliedSortOrder' => $effectiveSort,
+        'navigationInfo' => $navigationInfo
     ]);
 }
 
