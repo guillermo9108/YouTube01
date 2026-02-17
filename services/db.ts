@@ -179,6 +179,10 @@ class DBService {
 
     public async getRelatedVideos(videoId: string): Promise<Video[]> { return this.request<Video[]>(`action=get_related_videos&videoId=${videoId}`); }
 
+    public async getFolderVideos(videoId: string): Promise<{videos: Video[], sortOrder: string}> { 
+        return this.request<{videos: Video[], sortOrder: string}>(`action=get_folder_videos&videoId=${videoId}`); 
+    }
+
     public async getUnprocessedVideos(limit: number = 50, mode: string = 'normal'): Promise<Video[]> { return this.request<Video[]>(`action=get_unprocessed_videos&limit=${limit}&mode=${mode}`); }
 
     public async getUserActivity(userId: string): Promise<{watched: string[], liked: string[]}> { return this.request<{watched: string[], liked: string[]}>(`action=get_user_activity&userId=${userId}`); }
