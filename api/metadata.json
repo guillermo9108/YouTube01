@@ -1,0 +1,8 @@
+{
+  "name": "StreamPay OFICIAL 0.0.12.9",
+  "description": "Mejorar carga principal de archivos",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
