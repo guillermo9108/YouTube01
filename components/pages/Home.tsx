@@ -186,6 +186,9 @@ export default function Home() {
     const [userSortOrder, setUserSortOrder] = useState<string>(() => {
         return localStorage.getItem('sp_user_sort') || ''; 
     });
+    
+    // Orden aplicado por el backend (cuando no hay userSort)
+    const [appliedSortOrder, setAppliedSortOrder] = useState<string>('LATEST');
 
     // Data State
     const [videos, setVideos] = useState<Video[]>([]);
