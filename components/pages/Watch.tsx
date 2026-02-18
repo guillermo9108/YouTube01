@@ -50,6 +50,11 @@ export default function Watch() {
     const [folderSortOrder, setFolderSortOrder] = useState<string>('LATEST');
     const [userSortOverride, setUserSortOverride] = useState<string>('');
     
+    // Contexto de navegación desde la URL
+    const [searchContext, setSearchContext] = useState<string>('');
+    const [folderContext, setFolderContext] = useState<string>('');
+    const [categoryContext, setCategoryContext] = useState<string>('');
+    
     const [likes, setLikes] = useState<number>(0);
     const [dislikes, setDislikes] = useState<number>(0);
     const [comments, setComments] = useState<Comment[]>([]);
@@ -75,6 +80,7 @@ export default function Watch() {
         return `api/index.php?action=stream&id=${video.id}&token=${token}&cb=${Date.now()}`;
     }, [video?.id]);
 
+    // Extraer contexto de la URL al montar
     useEffect(() => { 
         window.scrollTo(0, 0); 
         refreshUser(); 
@@ -84,12 +90,25 @@ export default function Watch() {
         setShowComments(false);
         setExtractionAttempted(false);
         
-        // Obtener sortOrder de la URL si viene de búsqueda
+        // Obtener contexto completo de la URL
         const hash = window.location.hash;
         if (hash.includes('?')) {
             const params = new URLSearchParams(hash.split('?')[1]);
             const urlSort = params.get('sort');
+            const urlQuery = params.get('q');
+            const urlFolder = params.get('f');
+            const urlCategory = params.get('c');
+            
             if (urlSort) setUserSortOverride(urlSort);
+            if (urlQuery) setSearchContext(urlQuery);
+            if (urlFolder) setFolderContext(urlFolder);
+            if (urlCategory) setCategoryContext(urlCategory);
+        } else {
+            // Limpiar contexto si no hay parámetros
+            setSearchContext('');
+            setFolderContext('');
+            setCategoryContext('');
+            setUserSortOverride('');
         }
         
         return () => { setThrottled(false); };
@@ -101,76 +120,100 @@ export default function Watch() {
         
         const fetchData = async () => {
             try {
-                // Obtener video actual y configuración
-                const [v, settings, all] = await Promise.all([
+                const [v, settings] = await Promise.all([
                     db.getVideo(id),
-                    db.getSystemSettings(),
-                    db.getAllVideos()
+                    db.getSystemSettings()
                 ]);
                 
-                // Intentar obtener datos de carpeta (puede fallar si la API no existe)
-                let folderData: { videos?: Video[], sortOrder?: string } | null = null;
-                try {
-                    folderData = await db.getFolderVideos(id);
-                } catch (e) {
-                    // Si getFolderVideos no existe o falla, usamos el método antiguo
-                    console.warn('getFolderVideos not available, using fallback');
-                }
-
                 if (v) {
                     setVideo(v); 
                     setLikes(Number(v.likes || 0));
                     setDislikes(Number(v.dislikes || 0));
                     
-                    const currentPath = ((v as any).rawPath || v.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
+                    let queueVideos: Video[] = [];
+                    let effectiveSort = userSortOverride || (v as any).folderSortOrder || 'LATEST';
                     
-                    let sortedFolderVideos: Video[];
-                    let effectiveSort: string;
-                    
-                    // Si tenemos folderData válido del backend, usarlo
-                    if (folderData && folderData.videos && folderData.videos.length > 0) {
-                        effectiveSort = userSortOverride || folderData.sortOrder || (v as any).folderSortOrder || 'LATEST';
-                        setFolderSortOrder(effectiveSort);
+                    // CASO 1: Hay contexto de búsqueda - mostrar resultados de la búsqueda
+                    if (searchContext) {
+                        try {
+                            const searchRes = await db.getVideos(0, 100, folderContext, searchContext, categoryContext, 'ALL', effectiveSort);
+                            queueVideos = searchRes.videos || [];
+                            if ((searchRes as any).appliedSortOrder) {
+                                effectiveSort = (searchRes as any).appliedSortOrder;
+                            }
+                        } catch (e) {
+                            console.warn('Error fetching search results for context');
+                        }
+                    }
+                    // CASO 2: Hay contexto de carpeta - mostrar videos de esa carpeta
+                    else if (folderContext) {
+                        try {
+                            const folderRes = await db.getVideos(0, 100, folderContext, '', categoryContext, 'ALL', effectiveSort);
+                            queueVideos = folderRes.videos || [];
+                            if ((folderRes as any).appliedSortOrder) {
+                                effectiveSort = (folderRes as any).appliedSortOrder;
+                            }
+                        } catch (e) {
+                            console.warn('Error fetching folder videos for context');
+                        }
+                    }
+                    // CASO 3: Sin contexto - usar videos de la misma carpeta del video actual
+                    else {
+                        // Intentar obtener datos de carpeta desde el backend
+                        let folderData: { videos?: Video[], sortOrder?: string } | null = null;
+                        try {
+                            folderData = await db.getFolderVideos(id);
+                        } catch (e) {
+                            console.warn('getFolderVideos not available, using fallback');
+                        }
                         
-                        // Si hay override del usuario, reordenar en frontend
-                        sortedFolderVideos = userSortOverride 
-                            ? sortVideosBySortOrder(folderData.videos, userSortOverride)
-                            : folderData.videos;
-                    } else {
-                        // Fallback: usar el método antiguo con getAllVideos
-                        effectiveSort = userSortOverride || (v as any).folderSortOrder || 'LATEST';
-                        setFolderSortOrder(effectiveSort);
-                        
-                        const series = all.filter(ov => {
-                            const ovPath = ((ov as any).rawPath || ov.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
-                            return ovPath === currentPath;
-                        });
-                        
-                        sortedFolderVideos = sortVideosBySortOrder(series, effectiveSort);
+                        if (folderData && folderData.videos && folderData.videos.length > 0) {
+                            queueVideos = folderData.videos;
+                            effectiveSort = userSortOverride || folderData.sortOrder || effectiveSort;
+                        } else {
+                            // Fallback: obtener todos los videos de la misma carpeta
+                            const all = await db.getAllVideos();
+                            const currentPath = ((v as any).rawPath || v.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
+                            queueVideos = all.filter(ov => {
+                                const ovPath = ((ov as any).rawPath || ov.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
+                                return ovPath === currentPath;
+                            });
+                        }
                     }
                     
-                    setSeriesQueue(sortedFolderVideos);
+                    setFolderSortOrder(effectiveSort);
+                    
+                    // Aplicar ordenamiento si el usuario lo especificó
+                    const sortedVideos = userSortOverride 
+                        ? sortVideosBySortOrder(queueVideos, userSortOverride)
+                        : queueVideos;
+                    
+                    setSeriesQueue(sortedVideos);
 
-                    // Encontrar índice del video actual en la serie
-                    const currentIndex = sortedFolderVideos.findIndex(sv => sv.id === v.id);
+                    // Encontrar índice del video actual en la cola
+                    const currentIndex = sortedVideos.findIndex(sv => sv.id === v.id);
                     
-                    // Videos SIGUIENTES en la serie (desde el actual hacia adelante)
-                    const nextInSeries = sortedFolderVideos.slice(currentIndex + 1);
+                    // Videos SIGUIENTES (desde el actual hacia adelante)
+                    const nextInQueue = sortedVideos.slice(currentIndex + 1);
                     
-                    // Videos ANTERIORES en la serie (para "volver a ver")
-                    const previousInSeries = sortedFolderVideos.slice(0, currentIndex);
+                    // Videos ANTERIORES (para "volver a ver")
+                    const previousInQueue = sortedVideos.slice(0, currentIndex);
                     
-                    // Contenido de otras carpetas (descubrimiento)
-                    const others = all.filter(ov => {
-                        const ovPath = ((ov as any).rawPath || ov.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
-                        return ovPath !== currentPath;
-                    });
+                    // Si hay contexto de búsqueda, los "relacionados" son los resultados de la búsqueda
+                    if (searchContext || folderContext) {
+                        setRelatedVideos([...nextInQueue, ...previousInQueue]);
+                    } else {
+                        // Sin contexto: agregar contenido de otras carpetas para descubrimiento
+                        const all = await db.getAllVideos();
+                        const currentPath = ((v as any).rawPath || v.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
+                        const others = all.filter(ov => {
+                            const ovPath = ((ov as any).rawPath || ov.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
+                            return ovPath !== currentPath;
+                        });
+                        const shuffledOthers = sortVideosBySortOrder(others, 'RANDOM');
+                        setRelatedVideos([...nextInQueue, ...previousInQueue, ...shuffledOthers]);
+                    }
                     
-                    // Ordenar "otros" aleatoriamente para descubrimiento
-                    const shuffledOthers = sortVideosBySortOrder(others, 'RANDOM');
-
-                    // Orden final: Siguientes → Anteriores → Otros
-                    setRelatedVideos([...nextInSeries, ...previousInSeries, ...shuffledOthers]);
                     db.getComments(v.id).then(setComments);
 
                     if (user) {
@@ -193,7 +236,7 @@ export default function Watch() {
             }
         };
         fetchData();
-    }, [id, user?.id, userSortOverride]);
+    }, [id, user?.id, userSortOverride, searchContext, folderContext, categoryContext]);
 
     const handleRate = async (type: 'like' | 'dislike') => {
         if (!user || !video) return;
@@ -328,6 +371,18 @@ export default function Watch() {
         }
     };
 
+    // Construir URL para el siguiente video manteniendo el contexto
+    const buildNextVideoUrl = (nextId: string) => {
+        const params = new URLSearchParams();
+        if (searchContext) params.set('q', searchContext);
+        if (folderContext) params.set('f', folderContext);
+        if (categoryContext) params.set('c', categoryContext);
+        if (userSortOverride || folderSortOrder) params.set('sort', userSortOverride || folderSortOrder);
+        
+        const qs = params.toString();
+        return qs ? `/watch/${nextId}?${qs}` : `/watch/${nextId}`;
+    };
+
     const handleVideoEnded = async () => {
         if (!video || !user) return;
 
@@ -336,12 +391,8 @@ export default function Watch() {
         let nextVid = seriesQueue[currentIndex + 1];
 
         if (!nextVid && relatedVideos.length > 0) {
-            const externalVids = relatedVideos.filter(rv => {
-                const rvPath = ((rv as any).rawPath || rv.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
-                const curPath = ((video as any).rawPath || video.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
-                return rvPath !== curPath;
-            });
-            nextVid = externalVids[0];
+            // Si no hay siguiente en la cola, tomar el primero de relacionados que no sea el actual
+            nextVid = relatedVideos.find(rv => rv.id !== video.id) || null;
         }
 
         if (!nextVid) return;
@@ -350,22 +401,29 @@ export default function Watch() {
         const isVip = !!(user.vipExpiry && user.vipExpiry > Date.now() / 1000);
         const hasAccess = isAdmin || (isVip && nextVid.creatorRole === 'ADMIN') || user.id === nextVid.creatorId;
 
-        if (hasAccess) { navigate(`/watch/${nextVid.id}`); return; }
+        if (hasAccess) { navigate(buildNextVideoUrl(nextVid.id)); return; }
         
         const purchased = await db.hasPurchased(user.id, nextVid.id);
-        if (purchased) { navigate(`/watch/${nextVid.id}`); return; }
+        if (purchased) { navigate(buildNextVideoUrl(nextVid.id)); return; }
 
         if (Number(nextVid.price) <= Number(user.autoPurchaseLimit) && Number(user.balance) >= Number(nextVid.price)) {
             try {
                 await db.purchaseVideo(user.id, nextVid.id);
-                refreshUser(); navigate(`/watch/${nextVid.id}`);
-            } catch (e) { navigate(`/watch/${nextVid.id}`); }
+                refreshUser(); navigate(buildNextVideoUrl(nextVid.id));
+            } catch (e) { navigate(buildNextVideoUrl(nextVid.id)); }
         } else {
-            navigate(`/watch/${nextVid.id}`); 
+            navigate(buildNextVideoUrl(nextVid.id)); 
         }
     };
 
     if (loading) return <div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-500" size={48}/></div>;
+
+    // Título de la sección según el contexto
+    const getSectionTitle = () => {
+        if (searchContext) return `Resultados: "${searchContext}"`;
+        if (folderContext) return `En carpeta`;
+        return 'A Continuación';
+    };
 
     return (
         <div className="flex flex-col bg-slate-950 min-h-screen animate-in fade-in relative">
@@ -508,7 +566,7 @@ export default function Watch() {
                 <div className="lg:w-80 space-y-4 shrink-0">
                     <div className="flex items-center justify-between px-2">
                         <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                            <Play size={12} className="text-indigo-500"/> A Continuación
+                            <Play size={12} className="text-indigo-500"/> {getSectionTitle()}
                         </h3>
                         <div className="flex items-center gap-1">
                             <span className="text-[8px] text-slate-600 uppercase">
@@ -530,11 +588,22 @@ export default function Watch() {
                             </div>
                         </div>
                     </div>
+                    
+                    {/* Indicador de contexto */}
+                    {(searchContext || folderContext) && (
+                        <div className="px-2 py-2 bg-indigo-500/10 rounded-xl border border-indigo-500/20">
+                            <p className="text-[9px] text-indigo-300 font-bold">
+                                {searchContext && <span>🔍 Búsqueda: {searchContext}</span>}
+                                {folderContext && <span>📁 Carpeta: {folderContext}</span>}
+                            </p>
+                        </div>
+                    )}
+                    
                     <div className="space-y-4">
                         {relatedVideos.slice(0, visibleRelated).map((v, idx) => {
                             const isNextInSeries = seriesQueue.findIndex(sq => sq.id === video?.id) + 1 === seriesQueue.findIndex(sq => sq.id === v.id);
                             return (
-                                <Link key={v.id} to={`/watch/${v.id}`} className="group flex gap-3 p-2 hover:bg-white/5 rounded-2xl transition-all">
+                                <Link key={v.id} to={buildNextVideoUrl(v.id)} className="group flex gap-3 p-2 hover:bg-white/5 rounded-2xl transition-all">
                                     <div className="w-32 aspect-video bg-slate-900 rounded-xl overflow-hidden relative border border-white/5 shrink-0">
                                         <img src={v.thumbnailUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform" loading="lazy" />
                                         {isNextInSeries && (
