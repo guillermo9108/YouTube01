@@ -77,7 +77,7 @@ export default function Watch() {
     const streamUrl = useMemo(() => {
         if (!video) return '';
         const token = localStorage.getItem('sp_session_token') || '';
-        return `api/index.php?action=stream&id=${video.id}&token=${token}&cb=${Date.now()}`;
+        return `/api/index.php?action=stream&id=${video.id}&token=${token}&cb=${Date.now()}`;
     }, [video?.id]);
 
     // Extraer contexto de la URL al montar
