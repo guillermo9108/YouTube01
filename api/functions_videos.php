@@ -23,47 +23,69 @@ function video_process_rows(&$rows) {
 
 /**
  * Obtiene el sortOrder configurado para una carpeta o categoría
- * Busca en la jerarquía: carpeta específica -> categoría padre -> default
+ * HERENCIA RECURSIVA: Busca en toda la jerarquía de carpetas padre hasta encontrar un sortOrder configurado
+ * Prioridad: carpeta actual -> carpetas padre (recursivo) -> categoría -> default
  */
 function get_folder_sort_order($pdo, $folderPath, $categoryName = '') {
     $stmt = $pdo->query("SELECT categories FROM system_settings WHERE id = 1");
     $categories = json_decode($stmt->fetchColumn() ?: '[]', true);
     
-    // Normalizar el path de la carpeta
-    $folderName = $folderPath ? basename($folderPath) : '';
-    
-    // 1. Buscar por nombre de carpeta exacto
-    if ($folderName) {
-        foreach ($categories as $cat) {
-            if (strcasecmp($cat['name'], $folderName) === 0 && !empty($cat['sortOrder'])) {
-                return $cat['sortOrder'];
-            }
-        }
+    // Crear un mapa de categorías por nombre para búsqueda rápida
+    $catMap = [];
+    foreach ($categories as $cat) {
+        $catMap[strtolower($cat['name'])] = $cat;
     }
     
-    // 2. Buscar por categoría si se proporciona
-    if ($categoryName && $categoryName !== 'TODOS') {
-        foreach ($categories as $cat) {
-            if (strcasecmp($cat['name'], $categoryName) === 0 && !empty($cat['sortOrder'])) {
-                return $cat['sortOrder'];
-            }
-        }
-    }
-    
-    // 3. Si la carpeta tiene subcarpetas, buscar en el padre
+    // 1. Buscar por ruta de carpeta completa (recursiva hacia arriba)
     if ($folderPath) {
-        $parentPath = dirname($folderPath);
-        $parentName = basename($parentPath);
-        if ($parentName && $parentName !== '.') {
-            foreach ($categories as $cat) {
-                if (strcasecmp($cat['name'], $parentName) === 0 && !empty($cat['sortOrder'])) {
-                    return $cat['sortOrder'];
-                }
+        // Normalizar la ruta
+        $folderPath = str_replace('\\', '/', $folderPath);
+        $pathParts = array_filter(explode('/', $folderPath));
+        
+        // Buscar desde la carpeta más específica hasta la raíz
+        while (count($pathParts) > 0) {
+            $currentFolder = end($pathParts);
+            $lowerFolder = strtolower($currentFolder);
+            
+            if (isset($catMap[$lowerFolder]) && !empty($catMap[$lowerFolder]['sortOrder'])) {
+                return $catMap[$lowerFolder]['sortOrder'];
             }
+            
+            // Subir un nivel
+            array_pop($pathParts);
+        }
+    }
+    
+    // 2. Buscar por categoría del video si se proporciona
+    if ($categoryName && $categoryName !== 'TODOS') {
+        $lowerCat = strtolower($categoryName);
+        if (isset($catMap[$lowerCat]) && !empty($catMap[$lowerCat]['sortOrder'])) {
+            return $catMap[$lowerCat]['sortOrder'];
         }
     }
     
     return 'LATEST'; // Default
+}
+
+/**
+ * Obtiene las categorías hijas de una carpeta específica
+ * Solo retorna categorías que existen en videos dentro de esa carpeta
+ */
+function get_child_categories($pdo, $folderPath) {
+    $stmtS = $pdo->query("SELECT localLibraryPath FROM system_settings WHERE id = 1");
+    $rootPath = rtrim($stmtS->fetchColumn(), '/\\');
+    
+    if (empty($folderPath)) {
+        // En la raíz, retornar todas las categorías
+        return $pdo->query("SELECT DISTINCT category FROM videos WHERE category NOT IN ('PENDING','PROCESSING','FAILED_METADATA')")->fetchAll(PDO::FETCH_COLUMN);
+    }
+    
+    // Construir el path completo
+    $fullPath = str_replace('\\', '/', $rootPath . '/' . $folderPath) . '/%';
+    
+    $stmt = $pdo->prepare("SELECT DISTINCT category FROM videos WHERE videoUrl LIKE ? AND category NOT IN ('PENDING','PROCESSING','FAILED_METADATA')");
+    $stmt->execute([$fullPath]);
+    return $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
 function video_get_all($pdo) {
@@ -351,21 +373,17 @@ function video_discover_subfolders($pdo, $currentRelPath = '', $search = '') {
                 $thumb = $pdo->prepare("SELECT thumbnailUrl FROM videos WHERE videoUrl LIKE ? AND category NOT IN ('PENDING','PROCESSING','FAILED_METADATA') LIMIT 1");
                 $thumb->execute([$match]);
                 
-                // Buscar sortOrder específico de esta subcarpeta
-                $folderSortOrder = 'LATEST';
-                foreach ($categories as $cat) {
-                    if (strcasecmp($cat['name'], $item) === 0 && !empty($cat['sortOrder'])) {
-                        $folderSortOrder = $cat['sortOrder'];
-                        break;
-                    }
-                }
+                // Buscar sortOrder específico de esta subcarpeta con herencia
+                // Usar la función mejorada get_folder_sort_order que hace herencia recursiva
+                $folderSortOrder = get_folder_sort_order($pdo, $rel, '');
                 
                 $folders[] = [
                     'name' => $item, 
                     'relativePath' => $rel, 
                     'count' => $total, 
                     'thumbnailUrl' => fix_url($thumb->fetchColumn()),
-                    'sortOrder' => $folderSortOrder
+                    'sortOrder' => $folderSortOrder,
+                    'inheritedSort' => true  // Indica que puede estar heredando del padre
                 ];
             }
         }
