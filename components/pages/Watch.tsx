@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Video, Comment, UserInteraction, Category } from '../../types';
 import { db } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
-import { useParams, Link, useNavigate, useLocation } from '../Router';
+import { useParams, Link, useNavigate } from '../Router';
 import { 
     Loader2, Heart, ThumbsDown, MessageCircle, Lock, 
     ChevronRight, Home, Play, Info, ExternalLink, AlertTriangle, Send, CheckCircle2, Clock, Share2, X, Search, UserCheck, PlusCircle, ArrowRightCircle, Wallet, ShoppingCart, Music, ChevronDown, Bell, BellOff, Download, ArrowDownUp, SortAsc, Zap, RefreshCw
@@ -37,7 +37,6 @@ export default function Watch() {
     const { user, refreshUser } = useAuth();
     const { setThrottled } = useGrid();
     const navigate = useNavigate();
-    const location = useLocation();
     const toast = useToast();
     
     const [video, setVideo] = useState<Video | null>(null);
@@ -102,29 +101,53 @@ export default function Watch() {
         
         const fetchData = async () => {
             try {
-                // Obtener video actual y videos de la misma carpeta con sortOrder
-                const [v, folderData, settings] = await Promise.all([
+                // Obtener video actual y configuración
+                const [v, settings, all] = await Promise.all([
                     db.getVideo(id),
-                    db.getFolderVideos(id),
-                    db.getSystemSettings()
+                    db.getSystemSettings(),
+                    db.getAllVideos()
                 ]);
+                
+                // Intentar obtener datos de carpeta (puede fallar si la API no existe)
+                let folderData: { videos?: Video[], sortOrder?: string } | null = null;
+                try {
+                    folderData = await db.getFolderVideos(id);
+                } catch (e) {
+                    // Si getFolderVideos no existe o falla, usamos el método antiguo
+                    console.warn('getFolderVideos not available, using fallback');
+                }
 
                 if (v) {
                     setVideo(v); 
                     setLikes(Number(v.likes || 0));
                     setDislikes(Number(v.dislikes || 0));
                     
-                    // Obtener sortOrder: prioridad URL > carpeta configurada > LATEST
-                    const effectiveSort = userSortOverride || folderData.sortOrder || (v as any).folderSortOrder || 'LATEST';
-                    setFolderSortOrder(effectiveSort);
+                    const currentPath = ((v as any).rawPath || v.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
                     
-                    // Videos de la misma carpeta ya ordenados por el backend
-                    const folderVideos = folderData.videos || [];
+                    let sortedFolderVideos: Video[];
+                    let effectiveSort: string;
                     
-                    // Si hay override del usuario, reordenar en frontend
-                    const sortedFolderVideos = userSortOverride 
-                        ? sortVideosBySortOrder(folderVideos, userSortOverride)
-                        : folderVideos;
+                    // Si tenemos folderData válido del backend, usarlo
+                    if (folderData && folderData.videos && folderData.videos.length > 0) {
+                        effectiveSort = userSortOverride || folderData.sortOrder || (v as any).folderSortOrder || 'LATEST';
+                        setFolderSortOrder(effectiveSort);
+                        
+                        // Si hay override del usuario, reordenar en frontend
+                        sortedFolderVideos = userSortOverride 
+                            ? sortVideosBySortOrder(folderData.videos, userSortOverride)
+                            : folderData.videos;
+                    } else {
+                        // Fallback: usar el método antiguo con getAllVideos
+                        effectiveSort = userSortOverride || (v as any).folderSortOrder || 'LATEST';
+                        setFolderSortOrder(effectiveSort);
+                        
+                        const series = all.filter(ov => {
+                            const ovPath = ((ov as any).rawPath || ov.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
+                            return ovPath === currentPath;
+                        });
+                        
+                        sortedFolderVideos = sortVideosBySortOrder(series, effectiveSort);
+                    }
                     
                     setSeriesQueue(sortedFolderVideos);
 
@@ -138,9 +161,7 @@ export default function Watch() {
                     const previousInSeries = sortedFolderVideos.slice(0, currentIndex);
                     
                     // Contenido de otras carpetas (descubrimiento)
-                    const currentPath = ((v as any).rawPath || v.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
-                    const allVideos = await db.getAllVideos();
-                    const others = allVideos.filter(ov => {
+                    const others = all.filter(ov => {
                         const ovPath = ((ov as any).rawPath || ov.videoUrl || '').split(/[\\/]/).slice(0, -1).join('/');
                         return ovPath !== currentPath;
                     });
@@ -165,7 +186,11 @@ export default function Watch() {
                         setIsSubscribed(sub);
                     }
                 }
-            } catch (e) {} finally { setLoading(false); }
+            } catch (e) { 
+                console.error('Error fetching video data:', e);
+            } finally { 
+                setLoading(false); 
+            }
         };
         fetchData();
     }, [id, user?.id, userSortOverride]);
@@ -384,7 +409,7 @@ export default function Watch() {
             <div className="max-w-7xl mx-auto w-full p-4 lg:p-8 flex flex-col lg:flex-row gap-8">
                 <div className="flex-1">
                     <h1 className="text-2xl font-black text-white mb-2 uppercase italic tracking-tighter">{video?.title}</h1>
-                    <div className="text-[10px] text-slate-500 font-bold uppercase mb-6">{video?.views} vistas • {new Date(video!.createdAt * 1000).toLocaleDateString()}</div>
+                    <div className="text-[10px] text-slate-500 font-bold uppercase mb-6">{video?.views} vistas • {video?.createdAt ? new Date(video.createdAt * 1000).toLocaleDateString() : ''}</div>
                     
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-white/5 pb-8 mb-8">
                         <div className="flex items-center gap-4">
