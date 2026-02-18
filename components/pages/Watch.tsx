@@ -392,7 +392,7 @@ export default function Watch() {
 
         if (!nextVid && relatedVideos.length > 0) {
             // Si no hay siguiente en la cola, tomar el primero de relacionados que no sea el actual
-            nextVid = relatedVideos.find(rv => rv.id !== video.id) || null;
+            nextVid = relatedVideos.find(rv => rv.id !== video.id)!;
         }
 
         if (!nextVid) return;
