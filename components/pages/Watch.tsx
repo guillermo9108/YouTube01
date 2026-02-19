@@ -72,12 +72,43 @@ export default function Watch() {
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const viewMarkedRef = useRef(false);
+    const [streamingMode, setStreamingMode] = useState<'node' | 'php'>('node');
+    const streamRetryCount = useRef(0);
 
-    // Stream URL - definido temprano para uso en handlers
+    // Configuración del streamer Node.js - ajustar según tu servidor
+    const NODE_STREAMER_PORT = 3001;
+
+    // Stream URL - Node.js como principal, PHP como fallback
     const streamUrl = useMemo(() => {
         if (!video) return '';
         const token = localStorage.getItem('sp_session_token') || '';
-        return `api/index.php?action=stream&id=${video.id}&token=${token}&cb=${Date.now()}`;
+        const cacheBuster = Date.now();
+        const baseUrl = window.location.origin;
+        
+        if (streamingMode === 'node') {
+            // Intentar Node.js streamer primero
+            // Si el streamer está en el mismo dominio pero diferente puerto
+            const nodeUrl = `${window.location.protocol}//${window.location.hostname}:${NODE_STREAMER_PORT}/video?id=${encodeURIComponent(video.id)}&token=${encodeURIComponent(token)}&cb=${cacheBuster}`;
+            return nodeUrl;
+        } else {
+            // Fallback a PHP streaming
+            return `${baseUrl}/api/index.php?action=stream&id=${encodeURIComponent(video.id)}&token=${encodeURIComponent(token)}&cb=${cacheBuster}`;
+        }
+    }, [video?.id, streamingMode]);
+
+    // Handler para errores de streaming - cambia a PHP si Node.js falla
+    const handleStreamError = () => {
+        if (streamingMode === 'node' && streamRetryCount.current < 2) {
+            console.warn('Node.js streaming failed, falling back to PHP...');
+            streamRetryCount.current++;
+            setStreamingMode('php');
+        }
+    };
+
+    // Reset retry count cuando cambia el video
+    useEffect(() => {
+        streamRetryCount.current = 0;
+        setStreamingMode('node'); // Siempre intentar Node.js primero
     }, [video?.id]);
 
     // Extraer contexto de la URL al montar
@@ -310,8 +341,8 @@ export default function Watch() {
         
         const filename = `${video.title.replace(/[^a-zA-Z0-9\s]/g, '').trim()}.mp4`;
         
-        const baseUrl = window.location.origin;
-        const downloadUrl = `${baseUrl}/${streamUrl}`;
+        // streamUrl ya es una URL absoluta
+        const downloadUrl = streamUrl;
         
         if ((window as any).ReactNativeWebView) {
             (window as any).ReactNativeWebView.postMessage(JSON.stringify({
@@ -446,6 +477,7 @@ export default function Watch() {
                                 onPlay={() => setThrottled(true)} 
                                 onPause={() => setThrottled(false)}
                                 onTimeUpdate={handleTimeUpdate}
+                                onError={handleStreamError}
                             />
                         </div>
                     ) : (
