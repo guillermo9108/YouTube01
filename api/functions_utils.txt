@@ -178,30 +178,79 @@ function streamVideo($id, $pdo) {
     $stmt = $pdo->prepare("SELECT videoUrl FROM videos WHERE id = ?");
     $stmt->execute([$id]);
     $videoUrl = $stmt->fetchColumn();
-    if (!$videoUrl) { header("HTTP/1.1 404 Not Found"); exit; }
+    if (!$videoUrl) { 
+        header("HTTP/1.1 404 Not Found"); 
+        header("Content-Type: text/plain");
+        echo "Video no encontrado en base de datos";
+        exit; 
+    }
 
     $realPath = resolve_video_path($videoUrl);
-    if (!$realPath || !file_exists($realPath)) { header("HTTP/1.1 404 Not Found"); exit; }
+    if (!$realPath || !file_exists($realPath)) { 
+        header("HTTP/1.1 404 Not Found"); 
+        header("Content-Type: text/plain");
+        echo "Archivo no encontrado: " . ($realPath ? $realPath : $videoUrl);
+        exit; 
+    }
 
     $fileSize = filesize($realPath);
+    if ($fileSize === 0) {
+        header("HTTP/1.1 404 Not Found");
+        header("Content-Type: text/plain");
+        echo "Archivo vacío";
+        exit;
+    }
+    
     $ext = strtolower(pathinfo($realPath, PATHINFO_EXTENSION));
 
-    if ($ext === 'mp3') $mime = 'audio/mpeg';
-    else if ($ext === 'wav') $mime = 'audio/wav';
-    else if ($ext === 'm4a') $mime = 'audio/mp4';
-    else if ($ext === 'aac') $mime = 'audio/aac';
-    else if ($ext === 'mkv') $mime = 'video/x-matroska';
-    else if ($ext === 'webm') $mime = 'video/webm';
-    else $mime = 'video/mp4';
+    // Mapa de MIME types extendido
+    $mimeTypes = [
+        'mp4' => 'video/mp4',
+        'm4v' => 'video/mp4',
+        'mkv' => 'video/x-matroska',
+        'webm' => 'video/webm',
+        'avi' => 'video/x-msvideo',
+        'mov' => 'video/quicktime',
+        'wmv' => 'video/x-ms-wmv',
+        'flv' => 'video/x-flv',
+        'ogv' => 'video/ogg',
+        'mp3' => 'audio/mpeg',
+        'wav' => 'audio/wav',
+        'm4a' => 'audio/mp4',
+        'aac' => 'audio/aac',
+        'ogg' => 'audio/ogg',
+        'flac' => 'audio/flac',
+        'wma' => 'audio/x-ms-wma'
+    ];
+    
+    $mime = isset($mimeTypes[$ext]) ? $mimeTypes[$ext] : 'application/octet-stream';
 
+    // Headers CORS completos
     header("Access-Control-Allow-Origin: *");
     header("Access-Control-Allow-Methods: GET, HEAD, OPTIONS");
-    header("Access-Control-Allow-Headers: Range, Authorization, Content-Type");
-    header("Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges");
+    header("Access-Control-Allow-Headers: Range, Authorization, Content-Type, Accept");
+    header("Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges, Content-Type");
     header("Accept-Ranges: bytes");
     header("Content-Type: $mime");
+    
+    // Headers de caché para mejorar streaming
+    header("Cache-Control: no-cache, no-store, must-revalidate");
+    header("Pragma: no-cache");
+    header("Expires: 0");
+    
+    // Header para indicar que es contenido inline (no descarga)
+    $filename = basename($realPath);
+    header("Content-Disposition: inline; filename=\"" . rawurlencode($filename) . "\"");
 
-    if ($_SERVER['REQUEST_METHOD'] === 'HEAD') { header("Content-Length: $fileSize"); exit; }
+    if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+        http_response_code(200);
+        exit;
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'HEAD') { 
+        header("Content-Length: $fileSize"); 
+        exit; 
+    }
 
     if ($mode === 'NGINX') {
         $normalizedRealPath = str_replace('\\', '/', $realPath);
@@ -222,24 +271,59 @@ function streamVideo($id, $pdo) {
         exit;
     }
 
+    // Streaming PHP directo con soporte de byte-range
     $fp = @fopen($realPath, 'rb');
-    if (!$fp) { header("HTTP/1.1 403 Forbidden"); exit; }
-    set_time_limit(0); 
+    if (!$fp) { 
+        header("HTTP/1.1 403 Forbidden"); 
+        header("Content-Type: text/plain");
+        echo "No se puede abrir el archivo";
+        exit; 
+    }
+    
+    set_time_limit(0);
+    
+    // Manejo de Range requests para seek en video
     if (isset($_SERVER['HTTP_RANGE'])) {
-        preg_match('/bytes=(\d+)-(\d+)?/', $_SERVER['HTTP_RANGE'], $matches);
-        $offset = intval($matches[1]);
-        $end = isset($matches[2]) ? intval($matches[2]) : $fileSize - 1;
+        preg_match('/bytes=(\d*)-(\d*)/', $_SERVER['HTTP_RANGE'], $matches);
+        $offset = $matches[1] !== '' ? intval($matches[1]) : 0;
+        $end = $matches[2] !== '' ? intval($matches[2]) : $fileSize - 1;
+        
+        // Validar rangos
+        if ($offset > $fileSize - 1 || $end > $fileSize - 1) {
+            header('HTTP/1.1 416 Requested Range Not Satisfiable');
+            header("Content-Range: bytes */$fileSize");
+            fclose($fp);
+            exit;
+        }
+        
+        $length = $end - $offset + 1;
+        
         header('HTTP/1.1 206 Partial Content');
         header("Content-Range: bytes $offset-$end/$fileSize");
-        header("Content-Length: " . ($end - $offset + 1));
+        header("Content-Length: $length");
         fseek($fp, $offset);
-    } else { header("Content-Length: $fileSize"); }
-    $bufferSize = 1024 * 512; 
-    while (!feof($fp)) {
-        echo fread($fp, $bufferSize);
-        flush();
-        if (connection_aborted()) break;
+        
+        // Enviar solo el rango solicitado
+        $remaining = $length;
+        $bufferSize = 1024 * 256; // 256KB buffer
+        while (!feof($fp) && $remaining > 0) {
+            $readSize = min($bufferSize, $remaining);
+            echo fread($fp, $readSize);
+            $remaining -= $readSize;
+            flush();
+            if (connection_aborted()) break;
+        }
+    } else {
+        // Enviar archivo completo
+        header("Content-Length: $fileSize");
+        $bufferSize = 1024 * 512; // 512KB buffer
+        while (!feof($fp)) {
+            echo fread($fp, $bufferSize);
+            flush();
+            if (connection_aborted()) break;
+        }
     }
+    
     fclose($fp);
     exit;
 }
