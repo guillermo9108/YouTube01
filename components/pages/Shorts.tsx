@@ -80,10 +80,12 @@ const ShortItem = ({ video, isActive, isNear, onOpenShare, onWatched, onComplete
   const clickTimerRef = useRef<number | null>(null);
   const hasTrackedWatch = useRef(false);
   const hasTrackedComplete = useRef(false);
+  const streamRetryCount = useRef(0);
   
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [showHeart, setShowHeart] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [streamingMode, setStreamingMode] = useState<'node' | 'php'>('node');
   
   const [interaction, setInteraction] = useState<UserInteraction | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -94,6 +96,9 @@ const ShortItem = ({ video, isActive, isNear, onOpenShare, onWatched, onComplete
   const [dislikeCount, setDislikeCount] = useState(Number(video.dislikes || 0));
   const [dataLoaded, setDataLoaded] = useState(false);
   const prevVideoId = useRef(video.id);
+
+  // Configuración del streamer Node.js
+  const NODE_STREAMER_PORT = 3001;
 
   useEffect(() => {
     if (!user) return;
@@ -231,8 +236,32 @@ const ShortItem = ({ video, isActive, isNear, onOpenShare, onWatched, onComplete
 
   const videoSrc = useMemo(() => {
     const token = localStorage.getItem('sp_session_token') || '';
-    const base = video.videoUrl.includes('action=stream') ? video.videoUrl : `api/index.php?action=stream&id=${video.id}`;
-    return `${window.location.origin}/${base}&token=${token}`;
+    const cacheBuster = Date.now();
+    const baseUrl = window.location.origin;
+    
+    if (streamingMode === 'node') {
+      // Intentar Node.js streamer primero
+      const nodeUrl = `${window.location.protocol}//${window.location.hostname}:${NODE_STREAMER_PORT}/video?id=${encodeURIComponent(video.id)}&token=${encodeURIComponent(token)}&cb=${cacheBuster}`;
+      return nodeUrl;
+    } else {
+      // Fallback a PHP streaming
+      return `${baseUrl}/api/index.php?action=stream&id=${encodeURIComponent(video.id)}&token=${encodeURIComponent(token)}&cb=${cacheBuster}`;
+    }
+  }, [video.id, streamingMode]);
+
+  // Handler para errores de streaming - cambia a PHP si Node.js falla
+  const handleStreamError = () => {
+    if (streamingMode === 'node' && streamRetryCount.current < 2) {
+      console.warn('Node.js streaming failed for short, falling back to PHP...');
+      streamRetryCount.current++;
+      setStreamingMode('php');
+    }
+  };
+
+  // Reset cuando cambia el video
+  useEffect(() => {
+    streamRetryCount.current = 0;
+    setStreamingMode('node');
   }, [video.id]);
 
   if (!isNear) return <div className="w-full h-full snap-start bg-black shrink-0 flex items-center justify-center"><Loader2 className="animate-spin text-slate-800" /></div>;
@@ -245,6 +274,7 @@ const ShortItem = ({ video, isActive, isNear, onOpenShare, onWatched, onComplete
             <video
                 ref={videoRef} src={videoSrc} poster={video.thumbnailUrl}
                 className="w-full h-full object-cover" loop playsInline preload="auto" crossOrigin="anonymous"
+                onError={handleStreamError}
             />
             {paused && <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-white/50"><Pause size={64} fill="currentColor" /></div>}
             {showHeart && <div className="absolute inset-0 flex items-center justify-center pointer-events-none animate-in zoom-in fade-in duration-300"><Heart size={120} className="text-red-500 fill-red-500 drop-shadow-2xl" /></div>}
